@@ -3,3 +3,4 @@ job*.e*
 *.o
 *.lst
 benchmark-*
+*.swp

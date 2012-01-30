@@ -1,7 +1,7 @@
 const char* dgemm_desc = "Simple blocked dgemm.";
 
 #if !defined(BLOCK_SIZE)
-#define BLOCK_SIZE 40
+#define BLOCK_SIZE 128
 #endif
 
 #define min(a,b) (((a)<(b))?(a):(b))
@@ -11,6 +11,7 @@ const char* dgemm_desc = "Simple blocked dgemm.";
 * where C is M-by-N, A is M-by-K, and B is K-by-N. */
 static void do_block (const int lda, int M, int N, int K, double* A, double* B, double*restrict C)
 {
+	
 	int Kstop = (K>>2) <<2;
 	if(Kstop == K) {
   	for (int i = 0; i < M; ++i) {
@@ -91,13 +92,13 @@ static void do_block (const int lda, int M, int N, int K, double* A, double* B, 
 	*/
 }
 
-static void do_block_naive (const int lda, int M, int N, int K, double* A, double* B, double*restrict C)
+static void do_block_transpose(const int lda, int M, int N, int K, double* A, double* B, double*restrict C)
 {
   for (int i = 0; i < M; ++i) {
     for (int j = 0; j < N; ++j) {
       double cij = C[i+j*lda];
   		for(int k=0; k<K; ++k) {
-				cij += A[i+k*lda] * B[k+j*lda];
+				cij += A[i*M+k] * B[j*lda+k];
   		}
   		C[i+j*lda] = cij;
   	}
@@ -110,19 +111,26 @@ static void do_block_naive (const int lda, int M, int N, int K, double* A, doubl
  * On exit, A and B maintain their input values. */  
 void square_dgemm (int lda, double* A, double* B, double*restrict C)
 {
-  /* For each block-row of A */ 
-  for (int i = 0; i < lda; i += BLOCK_SIZE)
-    /* For each block-column of B */
-    for (int j = 0; j < lda; j += BLOCK_SIZE)
-      /* Accumulate block dgemms into block of C */
-      for (int k = 0; k < lda; k += BLOCK_SIZE)
-      {
+	double aT[BLOCK_SIZE*BLOCK_SIZE];
+  for (int i = 0; i < lda; i += BLOCK_SIZE) {
+		int M = min (BLOCK_SIZE, lda-i);
+    for (int j = 0; j < lda; j += BLOCK_SIZE) {
+			int K = min (BLOCK_SIZE, lda-j);
+
+			// Compute the transpose for A block
+			for(int m=0; m<M; m++) {
+				for(int k=0; k<K; k++) {
+					aT[(m*M)+k] = A[((k+j)*lda)+i+m];
+				}
+			}
+
+      for (int k = 0; k < lda; k += BLOCK_SIZE) {
 				/* Correct block dimensions if block "goes off edge of" the matrix */
-				int M = min (BLOCK_SIZE, lda-i);
-				int N = min (BLOCK_SIZE, lda-j);
-				int K = min (BLOCK_SIZE, lda-k);
+				int N = min (BLOCK_SIZE, lda-k);
 
 				/* Perform individual block dgemm */
-				do_block_naive(lda, M, N, K, A + i + k*lda, B + k + j*lda, C + i + j*lda);
+				do_block_transpose(lda, M, N, K, aT, B + j + k*lda, C + i + k*lda);
       }
+    }
+  }
 }
