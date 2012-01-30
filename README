@@ -1,0 +1,7 @@
+Having read through half of the Goto paper (which is what is used for BLAS dgemm), the right approach is the one illustrated in Fig. 5 since we are given column major matricies.
+
+This means the most important thing is an efficient GEBP kernel, that is then proceeded through differently than what is shown in the given blocked algorithm. Whereas the given blocked algo iterates down the columns of B for each row of A, Goto proposes that you instead do the reverse: iterate down the columns of A for each row in B.
+
+Blocks are sized such that you can hold the square block of A, one column of B, and one column of C. There are TLB considerations here; A is repacked so it fits in one TLB entry, B is repacked to require fewer than O(columns). The C sum is held in a temp variable while it's incremented, then added to the current C value afterwards. See Fig. 8.
+
+GEBP is used to do this; A is the Block, which changes with every call to the the GEBP kernel and is packed at the time of call, while B is the Panel, which is packed once and kept in memory between calls. Packing B before packing A is good for the TLB, since B packing trashes it by doing annoying stride accesses.
