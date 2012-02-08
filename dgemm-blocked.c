@@ -1,7 +1,7 @@
 const char* dgemm_desc = "Simple blocked dgemm.";
 
 #if !defined(BLOCK_SIZE)
-#define BLOCK_SIZE 256
+#define BLOCK_SIZE 128
 #endif
 
 #define min(a,b) (((a)<(b))?(a):(b))
@@ -95,12 +95,12 @@ static void do_block (const int lda, int M, int N, int K, double* A, double* B, 
 static void do_block_transpose(const int lda, int M, int N, int K, double* A, double* B, double*restrict C)
 {
   for (int i = 0; i < M; ++i) {
-    for (int j = 0; j < N; ++j) {
-      double cij = C[i+j*lda];
-  		for(int k=0; k<K; ++k) {
-				cij += A[i*M+k] * B[j*lda+k];
+    for (int k = 0; k < K; ++k) {
+      double cik = C[i+k*lda];
+  		for(int j=0; j<N; ++j) {
+				cik += A[i*N+j] * B[k*lda+j];
   		}
-  		C[i+j*lda] = cij;
+  		C[i+k*lda] = cik;
   	}
 	}
 }
@@ -115,18 +115,18 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
   for (int i = 0; i < lda; i += BLOCK_SIZE) {
 		int M = min (BLOCK_SIZE, lda-i);
     for (int j = 0; j < lda; j += BLOCK_SIZE) {
-			int K = min (BLOCK_SIZE, lda-j);
+			int N = min (BLOCK_SIZE, lda-j);
 
 			// Compute the transpose for A block
 			for(int m=0; m<M; m++) {
-				for(int k=0; k<K; k++) {
-					aT[(m*M)+k] = A[((k+j)*lda)+i+m];
+				for(int k=0; k<N; k++) {
+					aT[(m*N)+k] = A[((k+j)*lda)+i+m];
 				}
 			}
 
       for (int k = 0; k < lda; k += BLOCK_SIZE) {
 				/* Correct block dimensions if block "goes off edge of" the matrix */
-				int N = min (BLOCK_SIZE, lda-k);
+				int K = min (BLOCK_SIZE, lda-k);
 
 				/* Perform individual block dgemm */
 				do_block_transpose(lda, M, N, K, aT, B + j + k*lda, C + i + k*lda);
