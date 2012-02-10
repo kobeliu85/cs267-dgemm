@@ -1,21 +1,20 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-const char* dgemm_desc = "Simple blocked dgemm.";
+const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 #if !defined(BLOCK_SIZE)
-#define BLOCK_SIZE 64
+#define BLOCK_SIZE 4
 #endif
 
-#if !defined(REGISTER_BLOCK_SIZE)
-#define REGISTER_BLOCK_SIZE 4
+#if !defined(REG_BLOCK_SIZE)
+#define REG_BLOCK_SIZE 2
 #endif
 
 #define min(a,b) (((a)<(b))?(a):(b))
 
 static void print_matrix(char* header, const int lda, int M, int N, double * A)
 {
-	return;
 	printf("%s", header);
 	for(int i=0; i<M; i++) {
 		printf("[");
@@ -40,43 +39,93 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double
 {
 	// Pack A into aP, and transpose to row-major order
 	double * restrict aP = malloc(sizeof(double)*BLOCK_SIZE*BLOCK_SIZE);
-	const int ldaP = BLOCK_SIZE;
-	for(int i=0; i<BLOCK_SIZE; i++) {
-		for(int j=0; j<BLOCK_SIZE; j++) {
-			// aP like fits nicely in cache, so stride through A contiguously
-			aP[j*ldaP+i] = A[i*lda + j];
-		}
-	}
-
-	//printf("aP\n");
-	//print_matrix(ldaP, ldaP, ldaP, aP);
-
-	// aP and B are both packed now, do the math
-	// TODO: register blocking
+	// This is the number of items in one register-block-row
+	const int ldaP = BLOCK_SIZE*REG_BLOCK_SIZE;
+	const int REG_BLOCK_ITEMS = REG_BLOCK_SIZE * REG_BLOCK_SIZE;
+	// Repack A for contiguous register-blocked row-major access
+	// e.g. for reg-block of 2:
+	//
+	// 1 2 | 5 6
+	// 3_4_|_7_8
+	// 5 6 | 7 8
+	// 5 6 | 7 8
+	//
+	// 1 2 3 4, 5 6 7 8, 5 6 5 6, 7 8 7 8
 	
-	// Temporary Caux array stores, add back to C later
-	double Caux[BLOCK_SIZE];
-	// iterate over columns in B and C
-	for(int i=0; i<lda; i++) {
-		// Zero out Caux
-		for(int j=0; j<ldb; j++) {
-			Caux[j] = 0;
-		}
-		// iterate across rows in A
-		for(int j=0; j<ldb; j++) {
-			// iterate down rows of A, columns of B/Caux
-			for(int k=0; k<BLOCK_SIZE; k++) {
-				Caux[j] += aP[j*ldaP+k] * B[i*ldb+k];
+	// NOTE: Compiler couldn't vectorize this, but
+	// the repacking pattern is so messy I'm not surprised.
+	int count = 0;
+	for(int i=0; i<BLOCK_SIZE/REG_BLOCK_SIZE; i++) {
+		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
+			// This is a manual unroll, just to help me think through it
+			// aP[count++] = A[(i*lda)+j];
+			// aP[count++] = A[((i+1)*lda)+j];
+			// aP[count++] = A[(i*lda)+j+1];
+			// aP[count++] = A[((i+1)*lda)+j+1];
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				for(int l=0; l<REG_BLOCK_SIZE; l++) {
+					// <sub row>    <---sub column----->   <------item--------->
+					aP[(i * ldaP ) + (j*REG_BLOCK_ITEMS) + (k*REG_BLOCK_SIZE)+l] = 
+						A[(((j*REG_BLOCK_SIZE)+l)*lda)+(i*REG_BLOCK_SIZE)+k];
+				}
 			}
 		}
+
+	}
+
+	print_matrix("A\n", lda, BLOCK_SIZE, BLOCK_SIZE, A);
+	print_matrix("aP\n", REG_BLOCK_ITEMS, (BLOCK_SIZE*BLOCK_SIZE)  / (REG_BLOCK_ITEMS), (BLOCK_SIZE*BLOCK_SIZE) / (REG_BLOCK_ITEMS), aP);
+
+	// aP and B are both packed now, do the math
+	
+	// Temporary Caux array stores, add back to C later
+	// Register blocked, so REG_BLOCK_SIZE columns
+	double Caux[BLOCK_SIZE*REG_BLOCK_SIZE];
+
+	// iterate over REG_BLOCK_SIZE number columns in B and C
+	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
+
+		// Zero out Caux
+		for(int j=0; j<REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<BLOCK_SIZE; k++) {
+				Caux[j*BLOCK_SIZE+k] = 0;
+			}
+		}
+
+		// iterate on reg-blocks in Caux and rows of A
+		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
+			// iterate down reg-blocks column of B and across reg-block row in A
+			for(int k=0; k<BLOCK_SIZE/REG_BLOCK_SIZE; k++) {
+
+				// triple-nested loop to do matmul of two register blocks
+				// Down rows of A
+				for(int l=0; l<REG_BLOCK_SIZE; l++) {
+					// Across columns of B, row of C
+					for(int m=0; m<REG_BLOCK_SIZE; m++) {
+						// Across the row of A, down the column of B
+						for(int n=0; n<REG_BLOCK_SIZE; n++) {
+							Caux[((j*REG_BLOCK_SIZE))+(m*BLOCK_SIZE)+l] +=  
+							//     <sub row>  <---sub column---->   <------row-------><col>     <------column---><row>
+						    	aP[(j*ldaP) + (k*REG_BLOCK_ITEMS) + (l*REG_BLOCK_SIZE)+ n ] * B[((i+m)*BLOCK_SIZE)+n];
+						}
+					}
+				}
+				// End triple-nested loop
+
+			}
+		}
+
+		print_matrix("Caux\n", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
+		
 		// Store Caux back to proper column of C
-		for(int j=0; j<ldb; j++) {
-			C[i*lda+j] += Caux[j];
-			Caux[j] = 0;
+		for(int j=0; j<REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<BLOCK_SIZE; k++) {
+				C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE+k];
+			}
 		}
 	}
 
-	print_matrix("A\n", lda, ldaP, ldaP, A);
+	print_matrix("A\n", lda, BLOCK_SIZE, BLOCK_SIZE, A);
 	print_matrix("B\n", ldb, ldb, lda, B);
 	print_matrix("C\n", lda, ldb, lda, C);
 }

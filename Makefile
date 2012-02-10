@@ -5,12 +5,16 @@
 CC = cc 
 
 # for gcc
-#OPT = -O3 -mtune=barcelona -msse2 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
-#CFLAGS = -Wall -std=gnu99 $(OPT)
+OPT = -O3 -mtune=barcelona -msse2 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
+CFLAGS = -Wall -std=gnu99 $(OPT)
 
 # for cray
-OPT = -O3 -h list=m
-CFLAGS = $(OPT)
+#OPT = -O3 -h list=m
+#CFLAGS = $(OPT)
+
+# for pgi
+#OPT = -fast
+#CFLAGS = $(OPT)
 
 LDFLAGS = -Wall
 # librt is needed for clock_gettime
