@@ -126,7 +126,7 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
   }
 	else {
 		// TODO: Call something else to handle skinny remainders
-		printf("Not BLOCK_SIZE (%d): %d by %d\n", BLOCK_SIZE, lda, lda);
+		//printf("Not BLOCK_SIZE (%d): %d by %d\n", BLOCK_SIZE, lda, lda);
 		return;
 	}
 }
