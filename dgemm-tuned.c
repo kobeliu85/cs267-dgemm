@@ -126,63 +126,39 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 
 				// Load the submatrix cols from C, one in each
 				// TODO: unroll the first iteration, since it starts out 0
-				__m128d c0 = _mm_load_pd(&Caux[j*REG_BLOCK_SIZE]);
-				__m128d c1 = _mm_load_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE]);
-
-				// First col of A
-				__m128d a0  = _mm_load_pd(&aP[(j*ldaP) + (k*REG_BLOCK_ITEMS)]);
-				// Second col of A
-				__m128d a1  = _mm_load_pd(&aP[(j*ldaP) + (k*REG_BLOCK_ITEMS)+REG_BLOCK_SIZE]);
 
 				double * bTemp = &B[(k*REG_BLOCK_SIZE) + (i*BLOCK_SIZE)];
 
-				// First col of C
+				__m128d a0  = _mm_load_pd(&aP[(j*ldaP) + (k*REG_BLOCK_ITEMS)]);
+				__m128d a1  = _mm_load_pd(&aP[(j*ldaP) + (k*REG_BLOCK_ITEMS)+REG_BLOCK_SIZE]);
+
+				__m128d c0 = _mm_load_pd(&Caux[j*REG_BLOCK_SIZE]);
+				__m128d c1 = _mm_load_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE]);
+
 				__m128d b00 = _mm_set1_pd(bTemp[0]);
-				b00 = _mm_mul_pd(a0, b00);
 				__m128d b10 = _mm_set1_pd(bTemp[1]);
-				b10 = _mm_mul_pd(a1, b10);
 
-				c0 = _mm_add_pd(c0, _mm_add_pd(b00, b10));
-				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE], c0);
-
-				// Second col of C
 				__m128d b01 = _mm_set1_pd(bTemp[0+BLOCK_SIZE]);
-				b01 = _mm_mul_pd(a0, b01);
 				__m128d b11 = _mm_set1_pd(bTemp[1+BLOCK_SIZE]);
+
+				b00 = _mm_mul_pd(a0, b00);
+				b10 = _mm_mul_pd(a1, b10);
+				
+				c0 = _mm_add_pd(c0, _mm_add_pd(b00, b10));
+
+				b01 = _mm_mul_pd(a0, b01);
 				b11 = _mm_mul_pd(a1, b11);
 
 				c1 = _mm_add_pd(c1, _mm_add_pd(b01, b11));
+
+				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE], c0);
 				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE], c1);
 
+				/*
 				// triple-nested loop to do matmul of two register blocks
 				// Down rows of A
 				for(int l=0; l<REG_BLOCK_SIZE; l++) {
 					// Across columns of B, row of C
-					/*
-					double * restrict aTemp = 
-						  &aP[(j*ldaP) + (k*REG_BLOCK_ITEMS) + (l*REG_BLOCK_SIZE)];
-					double * restrict bTemp = 
-						  &B[k*REG_BLOCK_SIZE+((i)*BLOCK_SIZE)];
-					double * restrict cTemp = 
-						&Caux[((j*REG_BLOCK_SIZE))+l]; 
-
-						// Note that this is unrolled by 4, manually.
-					cTemp[0] +=
-						(aTemp[0] * bTemp[0]) + (aTemp[1] * bTemp[1]) +
-						(aTemp[2] * bTemp[2]) + (aTemp[3] * bTemp[3]);
-					cTemp[BLOCK_SIZE] +=
-						(aTemp[0] * bTemp[BLOCK_SIZE]) + (aTemp[1] * bTemp[BLOCK_SIZE+1]) +
-						(aTemp[2] * bTemp[BLOCK_SIZE+2]) + (aTemp[3] * bTemp[BLOCK_SIZE+3]);
-					cTemp[2*BLOCK_SIZE] +=
-						(aTemp[0] * bTemp[2*BLOCK_SIZE]) + (aTemp[1] * bTemp[2*BLOCK_SIZE+1]) +
-						(aTemp[2] * bTemp[2*BLOCK_SIZE+2]) + (aTemp[3] * bTemp[2*BLOCK_SIZE+3]);
-					cTemp[3*BLOCK_SIZE] +=
-						(aTemp[0] * bTemp[3*BLOCK_SIZE]) + (aTemp[1] * bTemp[3*BLOCK_SIZE+1]) +
-						(aTemp[2] * bTemp[3*BLOCK_SIZE+2]) + (aTemp[3] * bTemp[3*BLOCK_SIZE+3]);
-						*/
-					
-
-					/*
 					for(int m=0; m<REG_BLOCK_SIZE; m++) {
 						// Across the row of A, down the column of B
 						for(int n=0; n<REG_BLOCK_SIZE; n++) {
@@ -194,8 +170,8 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 						    	B[k*REG_BLOCK_SIZE+((i+m)*BLOCK_SIZE) +n];
 						}
 					}
-					*/
 				}
+				*/
 				// End triple-nested loop
 			}
 		}
