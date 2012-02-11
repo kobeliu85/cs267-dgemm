@@ -20,6 +20,9 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 #define min(a,b) (((a)<(b))?(a):(b))
 
+#define ldaP (BLOCK_SIZE*REG_BLOCK_SIZE)
+#define REG_BLOCK_ITEMS (REG_BLOCK_SIZE * REG_BLOCK_SIZE)
+
 static void print_matrix(char* header, const int lda, int M, int N, double * A)
 {
 	return;
@@ -43,14 +46,13 @@ static void print_matrix(char* header, const int lda, int M, int N, double * A)
  * and column-major panel B with leading dimension ldb,
  * with dimensions BLOCK_SIZE * lda
  */
-static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double*restrict C)
+static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*restrict B, double*restrict C)
 {
 	// Pack A into aP, and transpose to row-major order
-	static double aP[BLOCK_SIZE*BLOCK_SIZE] 
-			__attribute__((aligned(16)));
+	static double aP[BLOCK_SIZE*BLOCK_SIZE];
 	// This is the number of items in one register-block-row
-	const int ldaP = BLOCK_SIZE*REG_BLOCK_SIZE;
-	const int REG_BLOCK_ITEMS = REG_BLOCK_SIZE * REG_BLOCK_SIZE;
+	//const int ldaP = BLOCK_SIZE*REG_BLOCK_SIZE;
+	//const int REG_BLOCK_ITEMS = REG_BLOCK_SIZE * REG_BLOCK_SIZE;
 	// Repack A for contiguous register-blocked row-major access
 	// e.g. for reg-block of 2:
 	//
@@ -89,8 +91,7 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double
 	
 	// Temporary Caux array stores, add back to C later
 	// Register blocked, so REG_BLOCK_SIZE columns
-	static double Caux[BLOCK_SIZE*REG_BLOCK_SIZE]
-			__attribute__((aligned(16)));
+	static double Caux[BLOCK_SIZE*REG_BLOCK_SIZE];
 
 	// iterate over REG_BLOCK_SIZE number columns in B and C
 	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {

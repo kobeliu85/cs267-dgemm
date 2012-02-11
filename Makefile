@@ -5,11 +5,11 @@
 CC = cc 
 
 # for gcc
-OPT = -O3 -mtune=barcelona -msse2 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
+OPT = -O3 -march=barcelona -msse4 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
 CFLAGS = -Wall -std=gnu99 $(OPT)
 
 # for cray
-#OPT = -O3 -h list=m
+#OPT = -O3 -h fp3 -h list=m -h cpu=barcelona
 #CFLAGS = $(OPT)
 
 # for pgi
