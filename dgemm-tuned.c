@@ -1,11 +1,18 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <malloc.h>
+#include <string.h>
 
 const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
+// GCC with BLOCK_SIZE 64 and REG_BLOCK_SIZE 2 yields > 3GFlops
+// Cray with the same settings is 1.75?
+
 #if !defined(BLOCK_SIZE)
-#define BLOCK_SIZE 4
+#define BLOCK_SIZE 64
 #endif
+
+// Small experiments say 2 is the right size for this
 
 #if !defined(REG_BLOCK_SIZE)
 #define REG_BLOCK_SIZE 2
@@ -15,6 +22,7 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 static void print_matrix(char* header, const int lda, int M, int N, double * A)
 {
+	return;
 	printf("%s", header);
 	for(int i=0; i<M; i++) {
 		printf("[");
@@ -38,7 +46,8 @@ static void print_matrix(char* header, const int lda, int M, int N, double * A)
 static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double*restrict C)
 {
 	// Pack A into aP, and transpose to row-major order
-	double * restrict aP = malloc(sizeof(double)*BLOCK_SIZE*BLOCK_SIZE);
+	static double aP[BLOCK_SIZE*BLOCK_SIZE] 
+			__attribute__((aligned(16)));
 	// This is the number of items in one register-block-row
 	const int ldaP = BLOCK_SIZE*REG_BLOCK_SIZE;
 	const int REG_BLOCK_ITEMS = REG_BLOCK_SIZE * REG_BLOCK_SIZE;
@@ -74,23 +83,20 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double
 	}
 
 	print_matrix("A\n", lda, BLOCK_SIZE, BLOCK_SIZE, A);
-	print_matrix("aP\n", REG_BLOCK_ITEMS, (BLOCK_SIZE*BLOCK_SIZE)  / (REG_BLOCK_ITEMS), (BLOCK_SIZE*BLOCK_SIZE) / (REG_BLOCK_ITEMS), aP);
+	print_matrix("aP\n", REG_BLOCK_ITEMS, REG_BLOCK_ITEMS, (BLOCK_SIZE*BLOCK_SIZE) / (REG_BLOCK_ITEMS), aP);
 
 	// aP and B are both packed now, do the math
 	
 	// Temporary Caux array stores, add back to C later
 	// Register blocked, so REG_BLOCK_SIZE columns
-	double Caux[BLOCK_SIZE*REG_BLOCK_SIZE];
+	static double Caux[BLOCK_SIZE*REG_BLOCK_SIZE]
+			__attribute__((aligned(16)));
 
 	// iterate over REG_BLOCK_SIZE number columns in B and C
 	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
 
 		// Zero out Caux
-		for(int j=0; j<REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<BLOCK_SIZE; k++) {
-				Caux[j*BLOCK_SIZE+k] = 0;
-			}
-		}
+		memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE);
 
 		// iterate on reg-blocks in Caux and rows of A
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
@@ -105,13 +111,14 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double
 						// Across the row of A, down the column of B
 						for(int n=0; n<REG_BLOCK_SIZE; n++) {
 							Caux[((j*REG_BLOCK_SIZE))+(m*BLOCK_SIZE)+l] +=  
-							//     <sub row>  <---sub column---->   <------row-------><col>     <------column---><row>
-						    	aP[(j*ldaP) + (k*REG_BLOCK_ITEMS) + (l*REG_BLOCK_SIZE)+ n ] * B[((i+m)*BLOCK_SIZE)+n];
+							//     <sub row>  <---sub column---->   <------row-------><col>
+						    	aP[(j*ldaP) + (k*REG_BLOCK_ITEMS) + (l*REG_BLOCK_SIZE)+ n ] * 
+              //    <----sub row---> <-----column----> <row>
+						    	B[k*REG_BLOCK_SIZE+((i+m)*BLOCK_SIZE) +n];
 						}
 					}
 				}
 				// End triple-nested loop
-
 			}
 		}
 
@@ -128,6 +135,7 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double* B, double
 	print_matrix("A\n", lda, BLOCK_SIZE, BLOCK_SIZE, A);
 	print_matrix("B\n", ldb, ldb, lda, B);
 	print_matrix("C\n", lda, ldb, lda, C);
+
 }
 
 /**
