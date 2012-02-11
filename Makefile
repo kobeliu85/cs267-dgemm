@@ -5,7 +5,7 @@
 CC = cc 
 
 # for gcc
-OPT = -O3 -march=barcelona -msse4 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
+OPT = -O3 -march=barcelona -msse -msse2 -msse3 -msse4 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
 CFLAGS = -Wall -std=gnu99 $(OPT)
 
 # for cray
@@ -39,7 +39,7 @@ benchmark-tuned: benchmark.o dgemm-tuned.o
 	$(CC) -o $@ $^ $(LDLIBS)
 
 %.o : %.c
-	#$(CC) -S -c $(CFLAGS) $<
+	$(CC) -S -c $(CFLAGS) $<
 	$(CC) -c $(CFLAGS) $<
 
 .PHONY : clean
