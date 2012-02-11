@@ -11,7 +11,7 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 #if !defined(BLOCK_SIZE)
 
-#define BLOCK_SIZE 2
+#define BLOCK_SIZE 64
 // I've manually unrolled for 2x2 matrixes, so this has to stay 2 :/
 #define REG_BLOCK_SIZE 2
 #define ldaP (BLOCK_SIZE*REG_BLOCK_SIZE)
@@ -23,13 +23,14 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 #define min(a,b) (((a)<(b))?(a):(b))
 
 
-static void print_matrix(char* header, const int lda, int M, int N, double * A)
+void print_matrix(char* header, const int lda, int M, int N, double * A)
 {
+	return;
 	printf("\n%s\n", header);
 	for(int i=0; i<M; i++) {
 		printf("[");
 		for(int j=0; j<N; j++) {
-			printf("% .2f,", A[lda*j+i]);
+			printf("% .4f,", A[lda*j+i]);
 		}
 		printf("],\n");
 	}
@@ -141,14 +142,14 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 				__m128d b10 = _mm_set1_pd(bTemp[1]);
 				b10 = _mm_mul_pd(a1, b10);
 
-				c0 = _mm_add_pd(c1, _mm_add_pd(b00, b10));
+				c0 = _mm_add_pd(c0, _mm_add_pd(b00, b10));
 				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE], c0);
 
 				// Second col of C
 				__m128d b01 = _mm_set1_pd(bTemp[0+BLOCK_SIZE]);
 				b01 = _mm_mul_pd(a0, b01);
 				__m128d b11 = _mm_set1_pd(bTemp[1+BLOCK_SIZE]);
-				b11 = _mm_mul_pd(a0, b11);
+				b11 = _mm_mul_pd(a1, b11);
 
 				c1 = _mm_add_pd(c1, _mm_add_pd(b01, b11));
 				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE], c1);

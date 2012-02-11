@@ -5,7 +5,7 @@
 CC = cc 
 
 # for gcc
-OPT = -O3 -march=barcelona -msse -msse2 -msse3 -msse4 -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
+OPT = -O3 -march=barcelona -msse -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
 CFLAGS = -Wall -std=gnu99 $(OPT)
 
 # for cray
