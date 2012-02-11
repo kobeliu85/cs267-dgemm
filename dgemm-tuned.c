@@ -113,11 +113,22 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 
 		// Zero out Caux
 		//memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE);
+
+		// Vectorized version didn't do much
+		__m128d zero = _mm_setzero_pd();
+		for(int j=0; j<REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<BLOCK_SIZE; k+=2) {
+				_mm_store_pd(&Caux[j*BLOCK_SIZE+k], zero);
+			}
+		}
+
+		/*
 		for(int j=0; j<REG_BLOCK_SIZE; j++) {
 			for(int k=0; k<BLOCK_SIZE; k++) {
 				Caux[j*BLOCK_SIZE+k] = 0;
 			}
 		}
+		*/
 
 		// iterate on reg-blocks in Caux and rows of A
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
@@ -179,9 +190,14 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 		print_matrix("Caux = np.matrix([", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
 		
 		// Store Caux back to proper column of C
+		// Vectorized version was tested to be slightly faster
 		for(int j=0; j<REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<BLOCK_SIZE; k++) {
-				C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE+k];
+			for(int k=0; k<BLOCK_SIZE; k+=2) {
+				__m128d orig = _mm_loadu_pd(&C[((i+j)*lda)+k]);
+				__m128d temp = _mm_load_pd(&Caux[j*BLOCK_SIZE+k]);
+				temp = _mm_add_pd(temp, orig);
+				_mm_storeu_pd(&C[((i+j)*lda)+k], temp);
+				//C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE+k];
 			}
 		}
 	}
@@ -222,15 +238,15 @@ static void gepp_blk_var1(const int lda, double*restrict bP, double* A, double* 
  * On exit, A and B maintain their input values. */  
 void square_dgemm (int lda, double* A, double* B, double*restrict C)
 {
-	print_matrix("A = np.matrix([", lda, lda, lda, A);
-	print_matrix("B = np.matrix([", lda, lda, lda, B);
-	print_matrix("C = np.matrix([", lda, lda, lda, C);
+	//print_matrix("A = np.matrix([", lda, lda, lda, A);
+	//print_matrix("B = np.matrix([", lda, lda, lda, B);
+	//print_matrix("C = np.matrix([", lda, lda, lda, C);
 	// Block out into a panel x panel, and call gepp
 	// A iterates right by columns
 	
 	// Reuse bP for packing throughout
 	if(lda % BLOCK_SIZE == 0) {
-		double * restrict bP = malloc(sizeof(double)*lda*BLOCK_SIZE);
+		double * restrict bP = memalign(16, sizeof(double)*lda*BLOCK_SIZE);
   	for (int i = 0; i < lda; i += BLOCK_SIZE) {
 			// Do super-awesome gepp_block when all dims are block size
 				gepp_blk_var1(lda, bP, A + (i*lda), B + i, C);
