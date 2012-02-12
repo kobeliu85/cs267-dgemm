@@ -11,10 +11,14 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 #if !defined(BLOCK_SIZE)
 
-#define BLOCK_SIZE 128
-// 4 performs better than 2 with craycc
+#define BLOCK_SIZE 32
+
+#define BLOCK_SIZE_32 32
+#define BLOCK_SIZE_64 64
+#define BLOCK_SIZE_128 128
+
+// Register blocking
 #define REG_BLOCK_SIZE 16
-#define ldaP (BLOCK_SIZE*REG_BLOCK_SIZE)
 #define REG_BLOCK_ITEMS (REG_BLOCK_SIZE * REG_BLOCK_SIZE)
 
 #endif
@@ -48,6 +52,7 @@ void print_matrix(char* header, const int lda, int M, int N, double * A)
  */
 static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
 {
+	const int ldaP = BLOCK_SIZE * REG_BLOCK_SIZE;
 	// Pack A into aP, and transpose to row-major order
 	static double aP[BLOCK_SIZE*BLOCK_SIZE]
 		__attribute__((aligned(16)));
@@ -132,6 +137,81 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 	//print_matrix("C = np.matrix([", lda, ldb, lda, C);
 
 }
+static void gebp_opt2(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
+{
+	const int ldaP = BLOCK_SIZE_64 * REG_BLOCK_SIZE;
+	static double aP[BLOCK_SIZE_64*BLOCK_SIZE_64]
+		__attribute__((aligned(16)));
+	for(int i=0; i<BLOCK_SIZE_64 / REG_BLOCK_SIZE; i++) {
+		for(int j=0; j<BLOCK_SIZE_64; j++) {
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				aP[(ldaP*i) + (j*REG_BLOCK_SIZE) + k] = 
+					A[(i*REG_BLOCK_SIZE) + (lda*j) + k];
+			}
+		}
+	}
+	static double Caux[BLOCK_SIZE_64*REG_BLOCK_SIZE]
+		__attribute__((aligned(16)));
+	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
+		memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE_64);
+		for(int j=0; j<BLOCK_SIZE_64/REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE_64*k);
+				for(int l=0; l<BLOCK_SIZE_64; l++) {
+					double bItem = B[(i*BLOCK_SIZE_64) + (k*BLOCK_SIZE_64) + l];
+					for(int m=0; m<REG_BLOCK_SIZE; m++) {
+						cTemp[m] += 
+							aP[(j*ldaP) + (l*REG_BLOCK_SIZE) + m] * 
+							bItem;
+					}
+				}
+			}
+		}
+		for(int j=0; j<REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<BLOCK_SIZE_64; k++) {
+				C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE_64+k];
+			}
+		}
+	}
+}
+// 128
+static void gebp_opt3(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
+{
+	const int ldaP = BLOCK_SIZE_128 * REG_BLOCK_SIZE;
+	static double aP[BLOCK_SIZE_128*BLOCK_SIZE_128]
+		__attribute__((aligned(16)));
+	for(int i=0; i<BLOCK_SIZE_128 / REG_BLOCK_SIZE; i++) {
+		for(int j=0; j<BLOCK_SIZE_128; j++) {
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				aP[(ldaP*i) + (j*REG_BLOCK_SIZE) + k] = 
+					A[(i*REG_BLOCK_SIZE) + (lda*j) + k];
+			}
+		}
+	}
+	static double Caux[BLOCK_SIZE_128*REG_BLOCK_SIZE]
+		__attribute__((aligned(16)));
+	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
+		memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE_128);
+		for(int j=0; j<BLOCK_SIZE_128/REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE_128*k);
+				for(int l=0; l<BLOCK_SIZE_128; l++) {
+					double bItem = B[(i*BLOCK_SIZE_128) + (k*BLOCK_SIZE_128) + l];
+					for(int m=0; m<REG_BLOCK_SIZE; m++) {
+						cTemp[m] += 
+							aP[(j*ldaP) + (l*REG_BLOCK_SIZE) + m] * 
+							bItem;
+					}
+				}
+			}
+		}
+		for(int j=0; j<REG_BLOCK_SIZE; j++) {
+			for(int k=0; k<BLOCK_SIZE_128; k++) {
+				C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE_128+k];
+			}
+		}
+	}
+}
 
 /**
  * A is in column-major order with leading dimension lda
@@ -140,20 +220,54 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
  * B dimensions are BLOCK_SIZE * lda
  */
 
+// Optimized for BLOCK_SIZE_32
 static void gepp_blk_var1(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
 {
-	// Pack B into column-major bP with ldb = BLOCK_SIZE
-	const int ldb = BLOCK_SIZE;
+	// Pack B into column-major bP with ldb = BLOCK_SIZE_32
+	const int ldb = BLOCK_SIZE_32;
 	for(int i=0; i<lda; i++) {
-		for(int j=0; j<BLOCK_SIZE; j++) {
+		for(int j=0; j<BLOCK_SIZE_32; j++) {
 			bP[i*ldb+j] = B[i*lda+j];
 		}
 	}
 
 	// Do gebp on each block in A and packed B
-	// TODO: remainder case for when (lda%BLOCK_SIZE)>0
-	for(int i=0; i<lda; i+=BLOCK_SIZE) {
+	for(int i=0; i<lda; i+=BLOCK_SIZE_32) {
 		gebp_opt1(lda, ldb, A+i, bP, C+i);
+	}
+}
+
+// Optimized for BLOCK_SIZE_64
+static void gepp_blk_var2(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
+{
+	// Pack B into column-major bP with ldb = BLOCK_SIZE_64
+	const int ldb = BLOCK_SIZE_64;
+	for(int i=0; i<lda; i++) {
+		for(int j=0; j<BLOCK_SIZE_64; j++) {
+			bP[i*ldb+j] = B[i*lda+j];
+		}
+	}
+
+	// Do gebp on each block in A and packed B
+	for(int i=0; i<lda; i+=BLOCK_SIZE_64) {
+		gebp_opt2(lda, ldb, A+i, bP, C+i);
+	}
+}
+
+// Optimized for BLOCK_SIZE_128
+static void gepp_blk_var3(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
+{
+	// Pack B into column-major bP with ldb = BLOCK_SIZE_128
+	const int ldb = BLOCK_SIZE_128;
+	for(int i=0; i<lda; i++) {
+		for(int j=0; j<BLOCK_SIZE_128; j++) {
+			bP[i*ldb+j] = B[i*lda+j];
+		}
+	}
+
+	// Do gebp on each block in A and packed B
+	for(int i=0; i<lda; i+=BLOCK_SIZE_128) {
+		gebp_opt3(lda, ldb, A+i, bP, C+i);
 	}
 }
 
@@ -169,18 +283,72 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
 	// Block out into a panel x panel, and call gepp
 	// A iterates right by columns
 	
+	short packed = 0;
+	int packed_lda = lda;
+	double * restrict packed_A = A;
+	double * restrict packed_B = B;
+	double * restrict packed_C = C;
+
+	
+	if(lda % BLOCK_SIZE_32 != 0) {
+		packed = 1;
+		// Order by commonality, not like a branch here or there really matters.
+		int current = 32;
+		while(current < lda) {
+			if(current + 32 > lda) {
+				current += 32;
+			}
+			else if(current + 64 > lda) {
+				current += 64;
+			}
+			else {
+				current += 128;
+			}
+		}
+
+		packed_lda = current;
+
+		// This does a copy-on-write, which is somewhat dubious
+		// TODO: test against an aligned + memset version
+		// could also use entirely aligned loads/stores then too!
+		packed_A = calloc(packed_lda*packed_lda,sizeof(double));
+		packed_B = malloc(packed_lda*packed_lda*sizeof(double));
+		packed_C = malloc(packed_lda*packed_lda*sizeof(double));
+		// Repack it with the help of our friend memcpy
+		for(int i=0; i<lda; i++) {
+			memcpy(packed_A+(i*packed_lda), A + i*lda, lda * sizeof(double));
+			memcpy(packed_B+(i*packed_lda), B + i*lda, lda * sizeof(double));
+			memcpy(packed_C+(i*packed_lda), C + i*lda, lda * sizeof(double));
+		}
+	}
+
 	// Reuse bP for packing throughout
-	if(lda % BLOCK_SIZE == 0) {
-		double * restrict bP = memalign(16, sizeof(double)*lda*BLOCK_SIZE);
-  	for (int i = 0; i < lda; i += BLOCK_SIZE) {
-			// Do super-awesome gepp_block when all dims are block size
-				gepp_blk_var1(lda, bP, A + (i*lda), B + i, C);
+	if(packed_lda % BLOCK_SIZE_128 == 0) {
+		double * restrict bP = memalign(16, sizeof(double)*packed_lda*BLOCK_SIZE_128);
+  	for (int i = 0; i < packed_lda; i += BLOCK_SIZE_128) {
+				gepp_blk_var3(packed_lda, bP, packed_A + (i*packed_lda), packed_B + i, packed_C);
 		}
 		free(bP);
   }
-	else {
-		// TODO: Call something else to handle skinny remainders
-		//printf("Not BLOCK_SIZE (%d): %d by %d\n", BLOCK_SIZE, lda, lda);
-		return;
-	}
+	else if(packed_lda % BLOCK_SIZE_64 == 0) {
+		double * restrict bP = memalign(16, sizeof(double)*packed_lda*BLOCK_SIZE_64);
+  	for (int i = 0; i < packed_lda; i += BLOCK_SIZE_64) {
+				gepp_blk_var2(packed_lda, bP, packed_A + (i*packed_lda), packed_B + i, packed_C);
+		}
+		free(bP);
+  }
+	else if(packed_lda % BLOCK_SIZE_32 == 0) {
+		double * restrict bP = memalign(16, sizeof(double)*packed_lda*BLOCK_SIZE_32);
+  	for (int i = 0; i < packed_lda; i += BLOCK_SIZE_32) {
+				gepp_blk_var1(packed_lda, bP, packed_A + (i*packed_lda), packed_B + i, packed_C);
+		}
+		free(bP);
+  }
+
+	// Unpack the array here
+  if(packed) {
+  	for(int i=0; i<lda; i++) {
+			memcpy(C + i*lda, packed_C+(i*packed_lda), lda * sizeof(double));
+  	}
+  }
 }
