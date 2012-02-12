@@ -21,6 +21,7 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 
 #define min(a,b) (((a)<(b))?(a):(b))
+#define max(a,b) (((a)>(b))?(a):(b))
 
 
 void print_matrix(char* header, const int lda, int M, int N, double * A)
@@ -50,30 +51,6 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 	// Pack A into aP, and transpose to row-major order
 	static double aP[BLOCK_SIZE*BLOCK_SIZE]
 		__attribute__((aligned(16)));
-	// This is the number of items in one register-block-row
-	//const int ldaP = BLOCK_SIZE*REG_BLOCK_SIZE;
-	//const int REG_BLOCK_ITEMS = REG_BLOCK_SIZE * REG_BLOCK_SIZE;
-	
-	// NEW REPACK: Still by submatrix, but submats are col-major not row-major
-	// 1 2 | 5 6
-	// 3_4_|_7_8
-	// 5 6 | 7 8
-	// 5 6 | 7 8
-	//
-	// 1 3 2 4, 5 7 6 8, 5 5 6 6, 7 7 8 8
-	
-	/*
-	for(int i=0; i<BLOCK_SIZE/REG_BLOCK_SIZE; i++) {
-		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<REG_BLOCK_SIZE; k++) {
-				for(int l=0; l<REG_BLOCK_SIZE; l++) {
-					aP[(i*ldaP)+(j*REG_BLOCK_ITEMS)+(k*REG_BLOCK_SIZE)+l] = 
-						A[(j*REG_BLOCK_SIZE*lda)+(i*REG_BLOCK_SIZE)+(k*lda)+l];
-				}
-			}
-		}
-	}
-	*/
 
 	// NEWEST REPACK
 	//
@@ -133,45 +110,6 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 			}
 		}
 		
-		/*
-		// iterate on reg-block rows in Caux and rows of A
-		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
-			// iterate down reg-blocks column of B and across reg-block row in A
-			for(int k=0; k<BLOCK_SIZE/REG_BLOCK_SIZE; k++) {
-
-				// Load the submatrix cols from C, one in each
-				// TODO: unroll the first iteration, since Caux starts out 0
-
-				double * bTemp = &B[(k*REG_BLOCK_SIZE) + (i*BLOCK_SIZE)];
-
-				__m128d a0  = _mm_load_pd(&aP[(j*ldaP) + (k*REG_BLOCK_ITEMS)]);
-				__m128d a1  = _mm_load_pd(&aP[(j*ldaP) + (k*REG_BLOCK_ITEMS)+REG_BLOCK_SIZE]);
-
-				__m128d c0 = _mm_load_pd(&Caux[j*REG_BLOCK_SIZE]);
-				__m128d c1 = _mm_load_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE]);
-
-				__m128d b00 = _mm_set1_pd(bTemp[0]);
-				__m128d b10 = _mm_set1_pd(bTemp[1]);
-
-				__m128d b01 = _mm_set1_pd(bTemp[0+BLOCK_SIZE]);
-				__m128d b11 = _mm_set1_pd(bTemp[1+BLOCK_SIZE]);
-
-				b00 = _mm_mul_pd(a0, b00);
-				b10 = _mm_mul_pd(a1, b10);
-				
-				c0 = _mm_add_pd(c0, _mm_add_pd(b00, b10));
-
-				b01 = _mm_mul_pd(a0, b01);
-				b11 = _mm_mul_pd(a1, b11);
-
-				c1 = _mm_add_pd(c1, _mm_add_pd(b01, b11));
-
-				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE], c0);
-				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE], c1);
-			}
-		}
-		*/
-
 		//print_matrix("Caux = np.matrix([", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
 		
 		// Store Caux back to proper column of C
