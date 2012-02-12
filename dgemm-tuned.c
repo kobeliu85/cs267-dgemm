@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
-#include <emmintrin.h>
+//#include <emmintrin.h>
 
 const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
@@ -11,9 +11,9 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 #if !defined(BLOCK_SIZE)
 
-#define BLOCK_SIZE 64
-// I've manually unrolled for 2x2 matrixes, so this has to stay 2 :/
-#define REG_BLOCK_SIZE 2
+#define BLOCK_SIZE 128
+// 4 performs better than 2 with craycc
+#define REG_BLOCK_SIZE 16
 #define ldaP (BLOCK_SIZE*REG_BLOCK_SIZE)
 #define REG_BLOCK_ITEMS (REG_BLOCK_SIZE * REG_BLOCK_SIZE)
 
@@ -25,7 +25,6 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 void print_matrix(char* header, const int lda, int M, int N, double * A)
 {
-	return;
 	printf("\n%s\n", header);
 	for(int i=0; i<M; i++) {
 		printf("[");
@@ -46,7 +45,7 @@ void print_matrix(char* header, const int lda, int M, int N, double * A)
  * and column-major panel B with leading dimension ldb,
  * with dimensions BLOCK_SIZE * lda
  */
-static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*restrict B, double*restrict C)
+static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
 {
 	// Pack A into aP, and transpose to row-major order
 	static double aP[BLOCK_SIZE*BLOCK_SIZE]
@@ -54,31 +53,6 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 	// This is the number of items in one register-block-row
 	//const int ldaP = BLOCK_SIZE*REG_BLOCK_SIZE;
 	//const int REG_BLOCK_ITEMS = REG_BLOCK_SIZE * REG_BLOCK_SIZE;
-	// Repack A for contiguous register-blocked row-major access
-	// e.g. for reg-block of 2:
-	//
-	// 1 2 | 5 6
-	// 3_4_|_7_8
-	// 5 6 | 7 8
-	// 5 6 | 7 8
-	//
-	// 1 2 3 4, 5 6 7 8, 5 6 5 6, 7 8 7 8
-	
-	// NOTE: Compiler couldn't vectorize this, but
-	// the repacking pattern is so messy I'm not surprised.
-	/*
-	for(int i=0; i<BLOCK_SIZE/REG_BLOCK_SIZE; i++) {
-		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<REG_BLOCK_SIZE; k++) {
-				for(int l=0; l<REG_BLOCK_SIZE; l++) {
-					// <sub row>    <---sub column----->   <------item--------->
-					aP[(i * ldaP ) + (j*REG_BLOCK_ITEMS) + (k*REG_BLOCK_SIZE)+l] = 
-						A[(((j*REG_BLOCK_SIZE)+l)*lda)+(i*REG_BLOCK_SIZE)+k];
-				}
-			}
-		}
-	}
-	*/
 	
 	// NEW REPACK: Still by submatrix, but submats are col-major not row-major
 	// 1 2 | 5 6
@@ -87,6 +61,8 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 	// 5 6 | 7 8
 	//
 	// 1 3 2 4, 5 7 6 8, 5 5 6 6, 7 7 8 8
+	
+	/*
 	for(int i=0; i<BLOCK_SIZE/REG_BLOCK_SIZE; i++) {
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
 			for(int k=0; k<REG_BLOCK_SIZE; k++) {
@@ -97,9 +73,31 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 			}
 		}
 	}
+	*/
+
+	// NEWEST REPACK
+	//
+	// 1 2 5 6
+	// 3_4_7_8
+	// 5 6 7 8
+	// 5 6 7 8
+	//
+	// 1 3 2 4 5 7 6 8, 5 5 6 6 7 7 8 8
+	// The idea is to completely linearize a row for register blocking (m_r)
+
+	// Select the row
+	for(int i=0; i<BLOCK_SIZE / REG_BLOCK_SIZE; i++) {
+		// Select the column
+		for(int j=0; j<BLOCK_SIZE; j++) {
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				aP[(ldaP*i) + (j*REG_BLOCK_SIZE) + k] = 
+					A[(i*REG_BLOCK_SIZE) + (lda*j) + k];
+			}
+		}
+	}
 
 	//print_matrix("A\n", lda, BLOCK_SIZE, BLOCK_SIZE, A);
-	//print_matrix("aP\n", REG_BLOCK_ITEMS, REG_BLOCK_ITEMS, (BLOCK_SIZE*BLOCK_SIZE) / (REG_BLOCK_ITEMS), aP);
+	//print_matrix("aP\n", BLOCK_SIZE * REG_BLOCK_SIZE, BLOCK_SIZE* REG_BLOCK_SIZE, BLOCK_SIZE / REG_BLOCK_SIZE, aP);
 
 	// aP and B are both packed now, do the math
 	
@@ -112,31 +110,37 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
 
 		// Zero out Caux
-		//memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE);
+		// Trust memset, it's really efficient.
+		memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE);
 
-		// Vectorized version didn't do much
-		__m128d zero = _mm_setzero_pd();
-		for(int j=0; j<REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<BLOCK_SIZE; k+=2) {
-				_mm_store_pd(&Caux[j*BLOCK_SIZE+k], zero);
+		// Do a dumb loop and hope the cray vectorizes it for me :/
+
+		// iterate on reg-block rows in Caux and flattened panel-rows of A
+		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
+			// iterate on cols of B, cols of C
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				// iterate down the col of B, across the row of A
+				double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
+				for(int l=0; l<BLOCK_SIZE; l++) {
+					double bItem = B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
+					// iterate on row in A (linear due to repack)
+					for(int m=0; m<REG_BLOCK_SIZE; m++) {
+						cTemp[m] += 
+							aP[(j*ldaP) + (l*REG_BLOCK_SIZE) + m] * 
+							bItem;
+					}
+				}
 			}
 		}
-
+		
 		/*
-		for(int j=0; j<REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<BLOCK_SIZE; k++) {
-				Caux[j*BLOCK_SIZE+k] = 0;
-			}
-		}
-		*/
-
-		// iterate on reg-blocks in Caux and rows of A
+		// iterate on reg-block rows in Caux and rows of A
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
 			// iterate down reg-blocks column of B and across reg-block row in A
 			for(int k=0; k<BLOCK_SIZE/REG_BLOCK_SIZE; k++) {
 
 				// Load the submatrix cols from C, one in each
-				// TODO: unroll the first iteration, since it starts out 0
+				// TODO: unroll the first iteration, since Caux starts out 0
 
 				double * bTemp = &B[(k*REG_BLOCK_SIZE) + (i*BLOCK_SIZE)];
 
@@ -164,47 +168,30 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
 
 				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE], c0);
 				_mm_store_pd(&Caux[j*REG_BLOCK_SIZE+BLOCK_SIZE], c1);
-
-				/*
-				// triple-nested loop to do matmul of two register blocks
-				// Down rows of A
-				for(int l=0; l<REG_BLOCK_SIZE; l++) {
-					// Across columns of B, row of C
-					for(int m=0; m<REG_BLOCK_SIZE; m++) {
-						// Across the row of A, down the column of B
-						for(int n=0; n<REG_BLOCK_SIZE; n++) {
-
-							Caux[((j*REG_BLOCK_SIZE))+(m*BLOCK_SIZE)+l] +=  
-							//     <sub row>  <---sub column---->   <------row-------><col>
-						    	aP[(j*ldaP) + (k*REG_BLOCK_ITEMS) + (l*REG_BLOCK_SIZE)+ n ] * 
-              //    <----sub row---> <-----column----> <row>
-						    	B[k*REG_BLOCK_SIZE+((i+m)*BLOCK_SIZE) +n];
-						}
-					}
-				}
-				*/
-				// End triple-nested loop
 			}
 		}
+		*/
 
-		print_matrix("Caux = np.matrix([", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
+		//print_matrix("Caux = np.matrix([", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
 		
 		// Store Caux back to proper column of C
 		// Vectorized version was tested to be slightly faster
 		for(int j=0; j<REG_BLOCK_SIZE; j++) {
-			for(int k=0; k<BLOCK_SIZE; k+=2) {
+			for(int k=0; k<BLOCK_SIZE; k++) {
+				/*
 				__m128d orig = _mm_loadu_pd(&C[((i+j)*lda)+k]);
 				__m128d temp = _mm_load_pd(&Caux[j*BLOCK_SIZE+k]);
 				temp = _mm_add_pd(temp, orig);
 				_mm_storeu_pd(&C[((i+j)*lda)+k], temp);
-				//C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE+k];
+				*/
+				C[((i+j)*lda)+k] += Caux[j*BLOCK_SIZE+k];
 			}
 		}
 	}
 
-	print_matrix("A = np.matrix([", lda, BLOCK_SIZE, BLOCK_SIZE, A);
-	print_matrix("B = np.matrix([", ldb, ldb, lda, B);
-	print_matrix("C = np.matrix([", lda, ldb, lda, C);
+	//print_matrix("A = np.matrix([", lda, BLOCK_SIZE, BLOCK_SIZE, A);
+	//print_matrix("B = np.matrix([", ldb, ldb, lda, B);
+	//print_matrix("C = np.matrix([", lda, ldb, lda, C);
 
 }
 
@@ -214,6 +201,7 @@ static void gebp_opt1(const int lda, const int ldb, double*restrict A, double*re
  * B is in column-major order with leading dimension lda, K rows
  * B dimensions are BLOCK_SIZE * lda
  */
+
 static void gepp_blk_var1(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
 {
 	// Pack B into column-major bP with ldb = BLOCK_SIZE
@@ -229,7 +217,6 @@ static void gepp_blk_var1(const int lda, double*restrict bP, double* A, double* 
 	for(int i=0; i<lda; i+=BLOCK_SIZE) {
 		gebp_opt1(lda, ldb, A+i, bP, C+i);
 	}
-
 }
 
 /* This routine performs a dgemm operation

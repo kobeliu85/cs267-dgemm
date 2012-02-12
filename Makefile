@@ -5,12 +5,12 @@
 CC = cc 
 
 # for gcc
-OPT = -O3 -march=barcelona -msse -msse2 -msse3 -m3dnow -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
-CFLAGS = -Wall -std=gnu99 $(OPT)
+#OPT = -O3 -march=barcelona -msse -msse2 -msse3 -m3dnow -mfpmath=sse -fomit-frame-pointer -funroll-loops -ffast-math
+#CFLAGS = -Wall -std=gnu99 $(OPT)
 
 # for cray
-#OPT = -O3 -h fp3 -h list=m -h cpu=barcelona
-#CFLAGS = $(OPT)
+OPT = -O3 -h fp3 -h list=m -h cpu=barcelona
+CFLAGS = $(OPT)
 
 # for pgi
 #OPT = -fast
