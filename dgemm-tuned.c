@@ -99,32 +99,31 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 		// Do a dumb loop and hope the cray vectorizes it for me :/
 
 		// iterate on reg-block rows in Caux and flattened panel-rows of A
-		/*
-		double * restrict cTemp = Caux;
+		//double * restrict cTemp = Caux;
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
 			// iterate on cols of B, cols of C
 			double * restrict bTemp = &B[(i*BLOCK_SIZE)];
 			for(int k=0; k<REG_BLOCK_SIZE; k++) {
-				//double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
+				double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
 				// iterate down the col of B, across the row of A
 				for(int l=0; l<BLOCK_SIZE; l++) {
-					//double bItem = B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
+					double bItem = B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
 					// iterate on row in A (linear due to repack)
 					for(int m=0; m<REG_BLOCK_SIZE; m++) {
 						cTemp[m] += 
 							aP[(j*ldaP) + (l*REG_BLOCK_SIZE) + m] * 
-							//bItem;
-							bTemp[l];
+							bItem;
+							//bTemp[l];
 					}
 				}
 				bTemp += BLOCK_SIZE;
-				cTemp += BLOCK_SIZE;
+				//cTemp += BLOCK_SIZE;
 			}
-			cTemp += REG_BLOCK_SIZE;
+			//cTemp += REG_BLOCK_SIZE;
 		}
-		*/
 
 		// iterate on reg-block rows in Caux and flattened panel-rows of A
+		/*
 		double * restrict aTemp = aP; 
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
 			// iterate down B, across A
@@ -135,11 +134,9 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 				for(int m=0; m<REG_BLOCK_SIZE; m++) {
 					// B item is fixed, iterate down cols of A and C storing values
 					for(int n=0; n<REG_BLOCK_SIZE; n++) {
-						/*
-						Caux[(j*REG_BLOCK_SIZE) + (m*BLOCK_SIZE) +n] += 
-							aP[(j*ldaP) + (l*REG_BLOCK_SIZE)+n] * 
-							B[(i*BLOCK_SIZE) + (m*BLOCK_SIZE) + l];
-						*/
+						//Caux[(j*REG_BLOCK_SIZE) + (m*BLOCK_SIZE) +n] += 
+						//	aP[(j*ldaP) + (l*REG_BLOCK_SIZE)+n] * 
+						//	B[(i*BLOCK_SIZE) + (m*BLOCK_SIZE) + l];
 						cTemp[n] += 
 							aTemp[n] *
 							bTemp[0];
@@ -150,6 +147,7 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 				aTemp += REG_BLOCK_SIZE;
 			}
 		}
+		*/
 
 		
 		// iterate on reg-block rows in Caux and flattened panel-rows of A
