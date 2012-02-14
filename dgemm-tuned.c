@@ -6,9 +6,6 @@
 
 const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
-// GCC with BLOCK_SIZE 64 and REG_BLOCK_SIZE 2 yields > 3GFlops
-// Cray with the same settings is 1.75?
-
 #if !defined(BLOCK_SIZE)
 
 #define BLOCK_SIZE 32
@@ -22,7 +19,6 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 #define REG_BLOCK_ITEMS (REG_BLOCK_SIZE * REG_BLOCK_SIZE)
 
 #endif
-
 
 #define min(a,b) (((a)<(b))?(a):(b))
 #define max(a,b) (((a)>(b))?(a):(b))
@@ -70,11 +66,16 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 	// Select the row
 	for(int i=0; i<BLOCK_SIZE / REG_BLOCK_SIZE; i++) {
 		// Select the column
+		double *aPptr = aP + (ldaP*i);  
+		double *Aptr = A + (i*REG_BLOCK_SIZE);
 		for(int j=0; j<BLOCK_SIZE; j++) {
 			for(int k=0; k<REG_BLOCK_SIZE; k++) {
-				aP[(ldaP*i) + (j*REG_BLOCK_SIZE) + k] = 
-					A[(i*REG_BLOCK_SIZE) + (lda*j) + k];
+				aPptr[k] = Aptr[k];
+				//aP[(ldaP*i) + (j*REG_BLOCK_SIZE) + k] = 
+				//	A[(i*REG_BLOCK_SIZE) + (lda*j) + k];
 			}
+			aPptr += REG_BLOCK_SIZE;
+			Aptr += lda;
 		}
 	}
 
@@ -98,23 +99,98 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 		// Do a dumb loop and hope the cray vectorizes it for me :/
 
 		// iterate on reg-block rows in Caux and flattened panel-rows of A
+		/*
+		double * restrict cTemp = Caux;
 		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
 			// iterate on cols of B, cols of C
+			double * restrict bTemp = &B[(i*BLOCK_SIZE)];
 			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				//double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
 				// iterate down the col of B, across the row of A
-				double * cTemp = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
 				for(int l=0; l<BLOCK_SIZE; l++) {
-					double bItem = B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
+					//double bItem = B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
 					// iterate on row in A (linear due to repack)
 					for(int m=0; m<REG_BLOCK_SIZE; m++) {
 						cTemp[m] += 
 							aP[(j*ldaP) + (l*REG_BLOCK_SIZE) + m] * 
-							bItem;
+							//bItem;
+							bTemp[l];
 					}
+				}
+				bTemp += BLOCK_SIZE;
+				cTemp += BLOCK_SIZE;
+			}
+			cTemp += REG_BLOCK_SIZE;
+		}
+		*/
+
+		// iterate on reg-block rows in Caux and flattened panel-rows of A
+		double * restrict aTemp = aP; 
+		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
+			// iterate down B, across A
+			for(int l=0; l<BLOCK_SIZE; l++) {
+				double* restrict cTemp = Caux+(j*REG_BLOCK_SIZE); 
+				// iterate across B and C, REG_BLOCK_SIZE
+				double * restrict bTemp = B + (i*BLOCK_SIZE) + l;
+				for(int m=0; m<REG_BLOCK_SIZE; m++) {
+					// B item is fixed, iterate down cols of A and C storing values
+					for(int n=0; n<REG_BLOCK_SIZE; n++) {
+						/*
+						Caux[(j*REG_BLOCK_SIZE) + (m*BLOCK_SIZE) +n] += 
+							aP[(j*ldaP) + (l*REG_BLOCK_SIZE)+n] * 
+							B[(i*BLOCK_SIZE) + (m*BLOCK_SIZE) + l];
+						*/
+						cTemp[n] += 
+							aTemp[n] *
+							bTemp[0];
+					}
+					bTemp += BLOCK_SIZE;
+					cTemp += BLOCK_SIZE;
+				}
+				aTemp += REG_BLOCK_SIZE;
+			}
+		}
+
+		
+		// iterate on reg-block rows in Caux and flattened panel-rows of A
+		/*
+		__m128d cTemp[REG_BLOCK_SIZE/2];
+		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
+			// iterate on cols of B, cols of C
+			for(int k=0; k<REG_BLOCK_SIZE; k++) {
+				// iterate down the col of B, across the row of A
+
+				double *restrict cPtr = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
+				for(int l=0; l<REG_BLOCK_SIZE; l+= 2) {
+					cTemp[l/2] = _mm_load_pd(cPtr + l);
+				}
+
+				double *restrict aPptr = aP + (j*ldaP);
+
+				for(int l=0; l<BLOCK_SIZE; l++) {
+					double *bItem = &B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
+
+					// Load item from B
+					__m128d bTemp = _mm_load1_pd(bItem);
+
+					// iterate on row in A (linear due to repack)
+					for(int m=0; m<REG_BLOCK_SIZE; m+=2) {
+						// Load vec from aP
+						__m128d aTemp = _mm_load_pd(aP + (j*ldaP) + (l*REG_BLOCK_SIZE) + m);
+						cTemp[m/2] = _mm_add_pd(cTemp[m/2], _mm_mul_pd(aTemp, bTemp));
+
+						aPptr += 2;
+					}
+					aPptr += REG_BLOCK_SIZE;
+				}
+
+				for(int l=0; l<REG_BLOCK_SIZE; l+= 2) {
+					 _mm_store_pd(cPtr + l, cTemp[l/2]);
 				}
 			}
 		}
-		
+		*/
+
 		//print_matrix("Caux = np.matrix([", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
 		
 		// Store Caux back to proper column of C
