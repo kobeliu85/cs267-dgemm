@@ -298,11 +298,8 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
 			if(current + 32 > lda) {
 				current += 32;
 			}
-			else if(current + 64 > lda) {
-				current += 64;
-			}
 			else {
-				current += 128;
+				current += 64;
 			}
 		}
 
