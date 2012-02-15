@@ -1,0 +1,47 @@
+Description:	Tuned blocked dgemm, based on Goto.
+
+Size: 31	Gflop/s: 2.39
+Size: 32	Gflop/s: 2.56
+Size: 96	Gflop/s: 2.64
+Size: 97	Gflop/s: 2.5
+Size: 127	Gflop/s: 2.6
+Size: 128	Gflop/s: 2.67
+Size: 129	Gflop/s: 2.57
+Size: 191	Gflop/s: 2.6
+Size: 192	Gflop/s: 2.47
+Size: 229	Gflop/s: 2.53
+Size: 255	Gflop/s: 2.59
+Size: 256	Gflop/s: 2.72
+Size: 257	Gflop/s: 2.62
+Size: 319	Gflop/s: 2.57
+Size: 320	Gflop/s: 2.48
+Size: 321	Gflop/s: 2.37
+Size: 417	Gflop/s: 2.5
+Size: 479	Gflop/s: 2.33
+Size: 480	Gflop/s: 2.57
+Size: 511	Gflop/s: 2.2
+Size: 512	Gflop/s: 2.68
+Size: 639	Gflop/s: 2.3
+Size: 640	Gflop/s: 2.7
+Size: 767	Gflop/s: 2.28
+Size: 768	Gflop/s: 2.7
+Size: 769	Gflop/s: 2.6
+Application 25796719 resources: utime 0, stime 0
+
+ + --------------------------------------------------------------------------
+ +        Job name: job-tuned
+ +          Job Id: 7509699.nid00003
+ +          System: franklin
+ +     Queued Time: Tue Feb 14 22:03:33 2012
+ +      Start Time: Tue Feb 14 22:03:53 2012
+ + Completion Time: Tue Feb 14 22:04:08 2012
+ +            User: awang
+ +        MOM Host: nid00579
+ +           Queue: debug
+ +  Req. Resources: other=QSUBPID:52554:nid00256,walltime=00:30:00
+ +  Used Resources: cput=00:00:00,mem=4292kb,vmem=26060kb,walltime=00:00:15
+ +     Acct String: mp309
+ +   PBS_O_WORKDIR: /global/homes/a/awang/franklin/cs267-dgemm
+ +     Submit Args: job-tuned
+ + --------------------------------------------------------------------------
+

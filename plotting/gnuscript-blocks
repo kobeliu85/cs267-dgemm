@@ -1,0 +1,9 @@
+set terminal png
+set output "dgemm-blocks.png"
+
+set key left top 
+plot 	'block-32' using 1:2 title "Block 32" with linespoints, \
+ 	'block-64' using 1:2 title "Block 64" with linespoints, \
+	'block-128' using 1:2 title "Block 128" with linespoints, \
+	'tuned.dat' using 1:2 title "Tuned" with linespoints
+

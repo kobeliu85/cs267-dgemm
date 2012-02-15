@@ -1,0 +1,9 @@
+set terminal png
+set output "dgemm.png"
+
+set key left top 
+plot 	'blas.dat' using 1:2 title "Blas" with linespoints, \
+ 	'tuned.dat' using 1:2 title "Tuned" with linespoints, \
+	'naive.dat' using 1:2 title "Naive" with linespoints
+
+

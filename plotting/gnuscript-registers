@@ -1,0 +1,10 @@
+set terminal png
+set output "dgemm-registers.png"
+
+set key left top 
+plot 	'register-2' using 1:2 title "Register 2" with linespoints, \
+ 	'register-4' using 1:2 title "Register 4" with linespoints, \
+	'register-8' using 1:2 title "Register 8" with linespoints, \
+	'register-16' using 1:2 title "Register 16" with linespoints
+
+
