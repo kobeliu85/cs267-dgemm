@@ -26,6 +26,7 @@ const char* dgemm_desc = "Tuned blocked dgemm, based on Goto.";
 
 void print_matrix(char* header, const int lda, int M, int N, double * A)
 {
+	return;
 	printf("\n%s\n", header);
 	for(int i=0; i<M; i++) {
 		printf("[");
@@ -46,7 +47,7 @@ void print_matrix(char* header, const int lda, int M, int N, double * A)
  * and column-major panel B with leading dimension ldb,
  * with dimensions BLOCK_SIZE * lda
  */
-static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
+static void gebp_opt1(const int lda, const int ldb, const int blocked_lda, double* A, double*restrict B, double*restrict C)
 {
 	const int ldaP = BLOCK_SIZE * REG_BLOCK_SIZE;
 	// Pack A into aP, and transpose to row-major order
@@ -90,7 +91,7 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 		__attribute__((aligned(16)));
 
 	// iterate over REG_BLOCK_SIZE number columns in B and C
-	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
+	for(int i=0; i<blocked_lda; i+=REG_BLOCK_SIZE) {
 
 		// Zero out Caux
 		// Trust memset, it's really efficient.
@@ -149,46 +150,6 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 		}
 		*/
 
-		
-		// iterate on reg-block rows in Caux and flattened panel-rows of A
-		/*
-		__m128d cTemp[REG_BLOCK_SIZE/2];
-		for(int j=0; j<BLOCK_SIZE/REG_BLOCK_SIZE; j++) {
-			// iterate on cols of B, cols of C
-			for(int k=0; k<REG_BLOCK_SIZE; k++) {
-				// iterate down the col of B, across the row of A
-
-				double *restrict cPtr = Caux + (j*REG_BLOCK_SIZE) + (BLOCK_SIZE*k);
-				for(int l=0; l<REG_BLOCK_SIZE; l+= 2) {
-					cTemp[l/2] = _mm_load_pd(cPtr + l);
-				}
-
-				double *restrict aPptr = aP + (j*ldaP);
-
-				for(int l=0; l<BLOCK_SIZE; l++) {
-					double *bItem = &B[(i*BLOCK_SIZE) + (k*BLOCK_SIZE) + l];
-
-					// Load item from B
-					__m128d bTemp = _mm_load1_pd(bItem);
-
-					// iterate on row in A (linear due to repack)
-					for(int m=0; m<REG_BLOCK_SIZE; m+=2) {
-						// Load vec from aP
-						__m128d aTemp = _mm_load_pd(aP + (j*ldaP) + (l*REG_BLOCK_SIZE) + m);
-						cTemp[m/2] = _mm_add_pd(cTemp[m/2], _mm_mul_pd(aTemp, bTemp));
-
-						aPptr += 2;
-					}
-					aPptr += REG_BLOCK_SIZE;
-				}
-
-				for(int l=0; l<REG_BLOCK_SIZE; l+= 2) {
-					 _mm_store_pd(cPtr + l, cTemp[l/2]);
-				}
-			}
-		}
-		*/
-
 		//print_matrix("Caux = np.matrix([", BLOCK_SIZE, BLOCK_SIZE, REG_BLOCK_SIZE, Caux);
 		
 		// Store Caux back to proper column of C
@@ -211,7 +172,7 @@ static void gebp_opt1(const int lda, const int ldb, double* A, double*restrict B
 	//print_matrix("C = np.matrix([", lda, ldb, lda, C);
 
 }
-static void gebp_opt2(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
+static void gebp_opt2(const int lda, const int ldb, const int blocked_lda, double* A, double*restrict B, double*restrict C)
 {
 	const int ldaP = BLOCK_SIZE_64 * REG_BLOCK_SIZE;
 	static double aP[BLOCK_SIZE_64*BLOCK_SIZE_64]
@@ -226,7 +187,7 @@ static void gebp_opt2(const int lda, const int ldb, double* A, double*restrict B
 	}
 	static double Caux[BLOCK_SIZE_64*REG_BLOCK_SIZE]
 		__attribute__((aligned(16)));
-	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
+	for(int i=0; i<blocked_lda; i+=REG_BLOCK_SIZE) {
 		memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE_64);
 		for(int j=0; j<BLOCK_SIZE_64/REG_BLOCK_SIZE; j++) {
 			for(int k=0; k<REG_BLOCK_SIZE; k++) {
@@ -249,7 +210,7 @@ static void gebp_opt2(const int lda, const int ldb, double* A, double*restrict B
 	}
 }
 // 128
-static void gebp_opt3(const int lda, const int ldb, double* A, double*restrict B, double*restrict C)
+static void gebp_opt3(const int lda, const int ldb, const int blocked_lda, double* A, double*restrict B, double*restrict C)
 {
 	const int ldaP = BLOCK_SIZE_128 * REG_BLOCK_SIZE;
 	static double aP[BLOCK_SIZE_128*BLOCK_SIZE_128]
@@ -264,7 +225,7 @@ static void gebp_opt3(const int lda, const int ldb, double* A, double*restrict B
 	}
 	static double Caux[BLOCK_SIZE_128*REG_BLOCK_SIZE]
 		__attribute__((aligned(16)));
-	for(int i=0; i<lda; i+=REG_BLOCK_SIZE) {
+	for(int i=0; i<blocked_lda; i+=REG_BLOCK_SIZE) {
 		memset(Caux, '\0', sizeof(double)*REG_BLOCK_SIZE*BLOCK_SIZE_128);
 		for(int j=0; j<BLOCK_SIZE_128/REG_BLOCK_SIZE; j++) {
 			for(int k=0; k<REG_BLOCK_SIZE; k++) {
@@ -295,55 +256,124 @@ static void gebp_opt3(const int lda, const int ldb, double* A, double*restrict B
  */
 
 // Optimized for BLOCK_SIZE_32
-static void gepp_blk_var1(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
+static void gepp_blk_var1(const int lda, const int blocked_lda, double*restrict bP, double* A, double* B, double *restrict C)
 {
 	// Pack B into column-major bP with ldb = BLOCK_SIZE_32
 	const int ldb = BLOCK_SIZE_32;
-	for(int i=0; i<lda; i++) {
+	for(int i=0; i<blocked_lda; i++) {
 		for(int j=0; j<BLOCK_SIZE_32; j++) {
 			bP[i*ldb+j] = B[i*lda+j];
 		}
 	}
 
 	// Do gebp on each block in A and packed B
-	for(int i=0; i<lda; i+=BLOCK_SIZE_32) {
-		gebp_opt1(lda, ldb, A+i, bP, C+i);
+	for(int i=0; i<blocked_lda; i+=BLOCK_SIZE_32) {
+		gebp_opt1(lda, ldb, blocked_lda, A+i, bP, C+i);
 	}
 }
 
 // Optimized for BLOCK_SIZE_64
-static void gepp_blk_var2(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
+static void gepp_blk_var2(const int lda, const int blocked_lda, double*restrict bP, double* A, double* B, double *restrict C)
 {
 	// Pack B into column-major bP with ldb = BLOCK_SIZE_64
 	const int ldb = BLOCK_SIZE_64;
-	for(int i=0; i<lda; i++) {
+	for(int i=0; i<blocked_lda; i++) {
 		for(int j=0; j<BLOCK_SIZE_64; j++) {
 			bP[i*ldb+j] = B[i*lda+j];
 		}
 	}
 
 	// Do gebp on each block in A and packed B
-	for(int i=0; i<lda; i+=BLOCK_SIZE_64) {
-		gebp_opt2(lda, ldb, A+i, bP, C+i);
+	for(int i=0; i<blocked_lda; i+=BLOCK_SIZE_64) {
+		gebp_opt2(lda, ldb, blocked_lda, A+i, bP, C+i);
 	}
 }
 
 // Optimized for BLOCK_SIZE_128
-static void gepp_blk_var3(const int lda, double*restrict bP, double* A, double* B, double *restrict C)
+static void gepp_blk_var3(const int lda, const int blocked_lda, double*restrict bP, double* A, double* B, double *restrict C)
 {
 	// Pack B into column-major bP with ldb = BLOCK_SIZE_128
 	const int ldb = BLOCK_SIZE_128;
-	for(int i=0; i<lda; i++) {
+	for(int i=0; i<blocked_lda; i++) {
 		for(int j=0; j<BLOCK_SIZE_128; j++) {
 			bP[i*ldb+j] = B[i*lda+j];
 		}
 	}
 
 	// Do gebp on each block in A and packed B
-	for(int i=0; i<lda; i+=BLOCK_SIZE_128) {
-		gebp_opt3(lda, ldb, A+i, bP, C+i);
+	for(int i=0; i<blocked_lda; i+=BLOCK_SIZE_128) {
+		gebp_opt3(lda, ldb, blocked_lda, A+i, bP, C+i);
 	}
 }
+
+static void do_block_transpose(const int lda, const int ldb, const int ldc, int M, int K, int N, double* A, double* B, double*restrict C)
+{
+	// Down cols of C
+	for (int i=0; i<M; i++) {
+		// Across row of C
+		for(int j=0; j<N; j++) {
+			// Dot product of row of A, col of B
+			double cij = C[i+j*ldc];
+			for(int k=0; k<K; k++) {
+				cij += A[i*lda + k] * B[j*ldb + k];
+			}
+			C[i+j*ldc] = cij;
+		}
+	}
+}
+
+static void naive_all_purpose(const int lda, const int ldb, const int ldc, const int m, const int r, const int n,
+		double*restrict A, double* B, double*restrict C) {
+	static double aT[BLOCK_SIZE*BLOCK_SIZE];
+	// Block down cols of A
+	//printf("m=%d, r=%d, n=%d\n", m, r, n);
+	for(int i=0; i<m; i+=BLOCK_SIZE) {
+		// # rows of A block
+		int M = min(BLOCK_SIZE, m-i);
+		// Block across rows of A
+		for(int j=0; j<r; j+=BLOCK_SIZE) {
+			// # cols of A block
+			int R = min(BLOCK_SIZE, r-j);
+
+			//printf("M: %d, R: %d", M, R);
+			//print_matrix("Ablock", lda, M, R, A + i + (j*lda));
+			// Do the transpose
+			for(int k=0; k<M; k++) {
+				for(int l=0; l<R; l++) {
+					aT[(k*R)+l] = A[i + (j*lda) + (l*lda) + k];
+					//printf("aT: %d, A: %d\n", (k*R) + l, (l*lda) + k);
+				}
+			}
+			//print_matrix("AT", R, R, M, aT);
+
+			// Multiply aT with each block in row of B across B/C
+			for(int k=0; k<n; k+= BLOCK_SIZE) {
+				int K = min(BLOCK_SIZE, n-k);
+				do_block_transpose(R, ldb, ldc, 
+						M, R, K,
+						aT, B+j+k*lda, C+i+(k*lda));
+			}
+		}
+	}
+}
+
+/*
+static void naive_all_purpose(const int lda, const int ldb, const int ldc, const int m, const int r, const int n,
+		double* A, double* B, double*restrict C) {
+	// Row of A
+	for(int i=0; i<m; i++) {
+		// Col of B
+		for(int j=0; j<n; j++) {
+			double cij = C[i+(j*ldc)];
+			// Across row of A, down col of B
+			for(int k=0; k<r; k++) {
+				cij += A[i + (k*lda)] * B[(j*ldb) + k];
+			}
+			C[i + (j*ldc)] = cij;
+		}
+	}
+}
+*/
 
 /* This routine performs a dgemm operation
  *  C := C + A * B
@@ -354,72 +384,110 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
 	//print_matrix("A = np.matrix([", lda, lda, lda, A);
 	//print_matrix("B = np.matrix([", lda, lda, lda, B);
 	//print_matrix("C = np.matrix([", lda, lda, lda, C);
+  //naive_all_purpose(
+  //		lda, lda, lda, 
+	//		lda, lda, lda,
+	//		A, B, C);
+	//return;
 	// Block out into a panel x panel, and call gepp
 	// A iterates right by columns
 	
-	short packed = 0;
-	int packed_lda = lda;
-	double * restrict packed_A = A;
-	double * restrict packed_B = B;
-	double * restrict packed_C = C;
-
+	int blocked_lda = lda;
+	int fringe = 0;
 	
-	if(lda % BLOCK_SIZE_32 != 0) {
-		packed = 1;
+	if(lda % BLOCK_SIZE != 0) {
 		// Order by commonality, not like a branch here or there really matters.
-		int current = 32;
+		int current = 0;
 		while(current < lda) {
-			if(current + 32 > lda) {
-				current += 32;
+			if(current + BLOCK_SIZE > lda) {
+				break;
 			}
 			else {
-				current += 64;
+				current += BLOCK_SIZE;
 			}
 		}
-
-		packed_lda = current;
-
-		// This does a copy-on-write, which is somewhat dubious
-		// TODO: test against an aligned + memset version
-		// could also use entirely aligned loads/stores then too!
-		packed_A = calloc(packed_lda*packed_lda,sizeof(double));
-		packed_B = malloc(packed_lda*packed_lda*sizeof(double));
-		packed_C = malloc(packed_lda*packed_lda*sizeof(double));
-		// Repack it with the help of our friend memcpy
-		for(int i=0; i<lda; i++) {
-			memcpy(packed_A+(i*packed_lda), A + i*lda, lda * sizeof(double));
-			memcpy(packed_B+(i*packed_lda), B + i*lda, lda * sizeof(double));
-			memcpy(packed_C+(i*packed_lda), C + i*lda, lda * sizeof(double));
-		}
+		// Dimensions of the big block
+		blocked_lda = current;
+		// Size of the fringe
+		fringe = lda - blocked_lda;
 	}
+	//printf("Size: %d, Blocked: %d, Fringe: %d\n", lda, blocked_lda, fringe);
 
-	// Reuse bP for packing throughout
-	if(packed_lda % BLOCK_SIZE_128 == 0) {
-		double * restrict bP = memalign(16, sizeof(double)*packed_lda*BLOCK_SIZE_128);
-  	for (int i = 0; i < packed_lda; i += BLOCK_SIZE_128) {
-				gepp_blk_var3(packed_lda, bP, packed_A + (i*packed_lda), packed_B + i, packed_C);
+	// First do the big block
+
+	// First two are disabled for now
+	if(blocked_lda % BLOCK_SIZE_128 == 0) {
+		double * restrict bP = memalign(16, sizeof(double)*blocked_lda*BLOCK_SIZE_128);
+  	for (int i = 0; i < blocked_lda; i += BLOCK_SIZE_128) {
+				gepp_blk_var3(lda, blocked_lda, bP, A + (i*lda), B + i, C);
 		}
 		free(bP);
   }
-	else if(packed_lda % BLOCK_SIZE_64 == 0) {
-		double * restrict bP = memalign(16, sizeof(double)*packed_lda*BLOCK_SIZE_64);
-  	for (int i = 0; i < packed_lda; i += BLOCK_SIZE_64) {
-				gepp_blk_var2(packed_lda, bP, packed_A + (i*packed_lda), packed_B + i, packed_C);
+	else if(blocked_lda % BLOCK_SIZE_64 == 0) {
+		double * restrict bP = memalign(16, sizeof(double)*blocked_lda*BLOCK_SIZE_64);
+  	for (int i = 0; i < blocked_lda; i += BLOCK_SIZE_64) {
+				gepp_blk_var2(lda, blocked_lda, bP, A + (i*lda), B + i, C);
 		}
 		free(bP);
   }
-	else if(packed_lda % BLOCK_SIZE_32 == 0) {
-		double * restrict bP = memalign(16, sizeof(double)*packed_lda*BLOCK_SIZE_32);
-  	for (int i = 0; i < packed_lda; i += BLOCK_SIZE_32) {
-				gepp_blk_var1(packed_lda, bP, packed_A + (i*packed_lda), packed_B + i, packed_C);
+	else if(blocked_lda % BLOCK_SIZE_32 == 0) {
+		double * restrict bP = memalign(16, sizeof(double)*blocked_lda*BLOCK_SIZE_32);
+  	for (int i = 0; i < blocked_lda; i += BLOCK_SIZE_32) {
+				gepp_blk_var1(lda, blocked_lda, bP, A + (i*lda), B + i, C);
 		}
 		free(bP);
   }
 
-	// Unpack the array here
-  if(packed) {
-  	for(int i=0; i<lda; i++) {
-			memcpy(C + i*lda, packed_C+(i*packed_lda), lda * sizeof(double));
-  	}
+  // Do the fringes
+  if(fringe > 0) {
+		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		
+		int tall_skinny_off = lda * blocked_lda;
+		int short_fat_off = blocked_lda;
+		int small_block_off = tall_skinny_off + short_fat_off;
+
+		// Big block of C needs tall skinny from A, wide long from B
+  	naive_all_purpose(
+  			lda, lda, lda, 
+  			blocked_lda, fringe, blocked_lda, 
+				A+tall_skinny_off, B+short_fat_off, C);
+		//printf("Big block\n");
+		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		// Tall skinny block of C needs (big block from A * tall skinny from B)
+  	naive_all_purpose(
+  			lda, lda, lda, 
+  			blocked_lda, blocked_lda, fringe, 
+				A, B+tall_skinny_off, C+tall_skinny_off);
+		// Tall skinny block of C needs (tall skinny from A * small block from B)
+  	naive_all_purpose(
+  			lda, lda, lda, 
+  			blocked_lda, fringe, fringe, 
+				A+tall_skinny_off, B+small_block_off, C+tall_skinny_off);
+		//printf("Tall skinny\n");
+		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		// Short fat block from C needs (short fat from A * big block from B)
+		naive_all_purpose(
+				lda, lda, lda,
+				fringe, blocked_lda, blocked_lda,
+				A+short_fat_off, B, C+short_fat_off);
+		// Short fat block from C needs (small block from A * short fat from B)
+		naive_all_purpose(
+				lda, lda, lda,
+				fringe, fringe, blocked_lda,
+				A+small_block_off, B+short_fat_off, C+short_fat_off);
+		//printf("Short fat\n");
+		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		// Small block from C needs (short fat from A * tall skinny from B)
+		naive_all_purpose(
+				lda, lda, lda,
+				fringe, blocked_lda, fringe,
+				A+short_fat_off, B+tall_skinny_off, C+small_block_off);
+		// Small block from C needs (small from A * small from B)
+		naive_all_purpose(
+				lda, lda, lda,
+				fringe, fringe, fringe,
+				A+small_block_off, B+small_block_off, C+small_block_off);
+		//printf("Done C\n");
+		print_matrix("C = np.matrix([", lda, lda, lda, C);
   }
 }
