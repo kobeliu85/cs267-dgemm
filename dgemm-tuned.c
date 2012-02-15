@@ -440,7 +440,7 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
 
   // Do the fringes
   if(fringe > 0) {
-		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		//print_matrix("C = np.matrix([", lda, lda, lda, C);
 		
 		int tall_skinny_off = lda * blocked_lda;
 		int short_fat_off = blocked_lda;
@@ -452,7 +452,7 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
   			blocked_lda, fringe, blocked_lda, 
 				A+tall_skinny_off, B+short_fat_off, C);
 		//printf("Big block\n");
-		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		//print_matrix("C = np.matrix([", lda, lda, lda, C);
 		// Tall skinny block of C needs (big block from A * tall skinny from B)
   	naive_all_purpose(
   			lda, lda, lda, 
@@ -464,7 +464,7 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
   			blocked_lda, fringe, fringe, 
 				A+tall_skinny_off, B+small_block_off, C+tall_skinny_off);
 		//printf("Tall skinny\n");
-		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		//print_matrix("C = np.matrix([", lda, lda, lda, C);
 		// Short fat block from C needs (short fat from A * big block from B)
 		naive_all_purpose(
 				lda, lda, lda,
@@ -476,7 +476,7 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
 				fringe, fringe, blocked_lda,
 				A+small_block_off, B+short_fat_off, C+short_fat_off);
 		//printf("Short fat\n");
-		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		//print_matrix("C = np.matrix([", lda, lda, lda, C);
 		// Small block from C needs (short fat from A * tall skinny from B)
 		naive_all_purpose(
 				lda, lda, lda,
@@ -488,6 +488,6 @@ void square_dgemm (int lda, double* A, double* B, double*restrict C)
 				fringe, fringe, fringe,
 				A+small_block_off, B+small_block_off, C+small_block_off);
 		//printf("Done C\n");
-		print_matrix("C = np.matrix([", lda, lda, lda, C);
+		//print_matrix("C = np.matrix([", lda, lda, lda, C);
   }
 }
